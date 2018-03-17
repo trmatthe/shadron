@@ -1,0 +1,65 @@
+#include <hsv>
+
+/*
+    Playing around with Shadron sound options
+    This has a number of obvious issues, including guessed frequency bands. It wastefully performs SAMPLE_COUNT
+    reads for every invocation, when it really just needs to read the frequency band relating to the current Y position
+*/
+
+/* 
+vec2 shadron_Waveform(sound s, float timeOffset) – returns the Y position of the left and right channels of the waveform
+   of sound s at the current time plus timeOffset. The offset must be between -1 and 1, and this range corresponds to 512 
+   sound samples. The output is also between -1 and 1.
+
+vec2 shadron_Spectrum(sound s, float frequency) – returns the intensity of a given frequency in the spectrum of the left and 
+   right channels of sound s at the current time. The frequency argument must be between 0 and 1, and represents the linear 
+   range from 0 Hz up to the Nyquist frequency SAMPLE_RATE / 2. The output is also between 0 and 1.
+*/
+
+sound SoundSrc = file("psb-aomm.ogg");
+
+glsl const int SAMPLE_COUNT = 29;
+glsl const float BUCKET_STEP = 1.0/SAMPLE_COUNT; 
+glsl const float BOOST = 1.0;   // sometimes looks better with a 1-2x multiplier
+
+// Which sample bucket does the interest-of-value lie in?
+glsl int GetBucketIndex(float val) {
+
+    float accum = 0.001;    // tiny offset so adding BUCKET_STEP always pushes us into the next bucket, allowing for a gt comparison
+
+    for (int i=0; i < SAMPLE_COUNT; i++) {
+        accum += BUCKET_STEP;
+        if (accum > val) {
+            return i;
+        }
+    }
+    return SAMPLE_COUNT;    // just in case we don't match, safe(ish?) return
+}
+
+/*
+    Sample current waveform, store boosted values in frequency buckets
+    Sample previous frame, decaying less towards bottom of frame
+    Draw horizontal fill corresponding to the amplitude of the waveform
+    Merge with previous frame
+*/
+glsl vec4 update(sampler2D self, in vec2 pos, float deltaTime) {
+    
+    float samples[SAMPLE_COUNT];
+    vec3 before = texture(self, pos).rgb / (exp(deltaTime) * pos.y + 1.1);
+
+    for (int i=0; i < SAMPLE_COUNT; i++) {
+        vec2 tmp = shadron_Spectrum(SoundSrc, 0.15/SAMPLE_COUNT * i);
+        samples[i] = (tmp.x + tmp.y) * BOOST;
+    }
+
+    float snd = samples[GetBucketIndex(1 - pos.y)];
+    vec3 color = hsv(clamp(pos.y, 0, 0.9), 1, snd - pos.x * 0.4);
+    
+    return vec4(color + before, 1);  
+}
+
+glsl vec4 init(vec2 pos) {
+    return vec4(0, 0, 0, 1);
+}
+
+feedback MyFeedback = glsl(update, 1920/3, 1080/2) : initialize(init), full_range(false), update_rate(60), map(repeat);
